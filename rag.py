@@ -3,7 +3,7 @@ Runs a RAG application backed by a txtai Embeddings database.
 """
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
 os.environ['TIKA_LOG_PATH'] = '/media/alperk/Disk/KiK/KiK_Application/'
 import platform
 import re
@@ -87,12 +87,10 @@ class Application:
         """
         Creates a new application.
         """
-        self.index_file = '/media/alperk/Disk/KiK/KiK_Application/Chat_GPT_Indexes/bKik_index_model_bge-m3_01-10-2024'
         model_name = Config.ModelName_BAAI_BGE_M3
-        csv_file = 'Data/kik_512_chunk_17_09_24.csv'
 
         self.context = int(os.environ.get("CONTEXT", 10))
-        self.main_search = MainSearch(model_name=model_name, indexed_csv_file=csv_file, chunk_type=Config.ChunkType_512)
+        self.main_search = MainSearch(model_name=model_name, chunk_type=Config.ChunkType_512, chunking_method=Config.ChunkingMethod_NEW)
         
         self.main_categories = {
             "Kanunlar": ["4734", "4735"],
@@ -121,7 +119,7 @@ class Application:
         self.df = pd.read_csv(csv_file)
 
 
-    
+    @Config.calculate_runtime
     def get_madde(self, text, file_name):
         start_total = time.time()
         def get_overlap(s1, s2):
@@ -134,7 +132,6 @@ class Application:
         def process_row(row, search_term, matches):
             madde_content = row['Kanun']
             madde_no = str(row["Kanun No"]).strip()
-            print("LOGAEB madde_no: ", madde_no, "matches: ", matches)
             if madde_no in matches:
                 return row, None
             else:
@@ -148,8 +145,6 @@ class Application:
 
             pattern = re.compile(r'(?i)(?<!Geçici\s)Madde\s*(\d+)')
             matches = pattern.findall(search_term)
-            print("LOGAEB matches: ", matches)
-
             results_ratios = Parallel(n_jobs=-1)(
                 delayed(process_row)(row, search_term, matches) for _, row in filtered_rows.iterrows()
             )
@@ -158,33 +153,7 @@ class Application:
             results = [result for result in results if result is not None]
 
             return results
-        
-        # def search_madde_csv(filtered_rows, search_term):
-        #     start_search = time.time()
-        #     results = []
-        #     ratios = []
-            
-        #     pattern = re.compile(r'(?i)Madde\s*(\d+)')
-        #     matches = pattern.findall(search_term)
-        #     print("LOGAEB matches: ", matches)
-
-        #     for index, row in filtered_rows.iterrows():
-        #         madde_content = row['Kanun']
-                
-        #         madde_no = str(row["Kanun No"]).strip()
-        #         if madde_no in matches:
-        #             results.append(row)
-        #         else:
-        #             match_ratio = get_overlap(search_term, madde_content)
-        #             ratios.append(match_ratio)
-        #             if  match_ratio > 70:  
-        #                 results.append(row)
-            
-        #     end_search = time.time()
-        #     print(f"search_madde_csv total runtime: {end_search - start_search:.4f} seconds")
-           
-        #     return results
-
+    
         def find_article(chunk, file_result, df):
             start_find = time.time()
             files = df['FileName'].tolist()
@@ -270,230 +239,400 @@ class Application:
 
 
     def run(self):
+
+        radio_button_option = None
+        hybrid_param_option = None
+        topk_option = None
         option = None
         option2 = None
-        
+
         col1, col2 = st.columns(2)
+
         with col1:
-            option = st.selectbox(
-                "Arama Nerede Yapılsın?",
-                (Config.Option_All, Config.Option_Kanun, Config.Option_Teblig, Config.Option_Esas, Config.Option_Yonetmelik, Config.Option_Yonerge),
-                key="main_categories-single"
-            )
+            with st.container(border=True):
+                radio_button_option = st.radio("Hangi versiyon kullanılsın?", [Config.ChunkingMethod_OLD, Config.ChunkingMethod_NEW],
+                                            captions=["Toplantıda gösterdiğimiz version", "Son yapılan geliştirmelerin olduğu version"])
+        with col2:
+            with st.container(border=False):
+                topk_option = st.number_input("Toplam Cevap Sayısı:", min_value=1, max_value=20, value=5, step=1)
+            with st.container(border=False):
+                hybrid_param_option = st.slider("Hybrid Parametresi:", min_value=0.0, max_value=1.0, value=0.5, step=0.1)
 
-        if option != "Bütün Veriler":
-            option_idx = list(self.main_categories.keys()).index(option)
-            print("LOGAEB: ", "option_idx", option_idx)
-            print("LOGAEB: ", "option", option)
+        if radio_button_option == Config.ChunkingMethod_OLD:
         
+            col1, col2 = st.columns(2)
+            with col1:
+                option = st.selectbox(
+                    "Arama Nerede Yapılsın?",
+                    (Config.Option_All, Config.Option_Kanun, Config.Option_Teblig, Config.Option_Esas, Config.Option_Yonetmelik, Config.Option_Yonerge),
+                    key="main_categories-single"
+                )
+
+            if option != "Bütün Veriler":
+                option_idx = list(self.main_categories.keys()).index(option)
+
+                if option == "Kanunlar":
+                    with col2:
+                        option2 = st.selectbox("Kanunlar", (
+                            # "Hepsi",
+                            # "4734", 
+                            # "4735"
+                            Config.Option_Kanun_Hepsi,
+                            Config.Option_Kanun_4734,
+                            Config.Option_Kanun_4735
+                            ))
+                elif option == "Tebliğler":
+                    with col2:
+                        option2 = st.selectbox(
+                            "Tebliğler",
+                            (
+                                Config.Option_Teblig_Hepsi,
+                                Config.Option_Teblig_4734,
+                                Config.Option_Teblig_Dogrudan,
+                                Config.Option_Teblig_Esik,
+                                Config.Option_Teblig_Ihalelere,
+                                Config.Option_Teblig_KamuIhale,
+                                Config.Option_Teblig_KamuOzel,
+                                Config.Option_Teblig_Yapim
+                            ))
+                elif option == "Esaslar":
+                    with col2:
+                        option2 = st.selectbox("Esaslar", (
+                            # "Hepsi"
+                            Config.Option_Esas_Hepsi
+                            ))
+                elif option == "Yönetmelikler":
+                    with col2:
+                        option2 = st.selectbox("Yönetmelikler", (
+                            # "Hepsi",
+                            # "İhale Uygulama Yönetmelikleri",
+                            # "Muayene ve Kabul Yönetmelikleri"
+                            Config.Option_Yonetmelik_Hepsi,
+                            Config.Option_Yonetmelik_Ihale,
+                            Config.Option_Yonetmelik_Muayene,
+                            Config.Option_Yonetmelik_Ihalelere
+                            ))
+                elif option == "Yönergeler":
+                    with col2:
+                        option2 = st.selectbox("Yönergeler", (
+                            # "Hepsi",
+                            # "İtirazen Şikayet Başvuru Bedelinin İadesine İlişkin Yönerge",
+                            # "Yurt Dışında Yapım İşlerinden Elde Edilen İş Deneyim Belgelerinin Belgelerin Sunuluş Şekline Uygunluğunu Tevsik Amacıyla EKAP'a Kaydedilmesine İlişkin Yönerg"
+                            Config.Option_Yonerge_Hepsi,
+                            Config.Option_Yonerge_Itiraz,
+                            Config.Option_Yonerge_Yurt
+                            ))
+                st.write(f'Arama Kümesi {option} -> {option2} olarak seçildi.')
+            else:
+                st.write(f'Arama Kümesi {option} olarak seçildi.')
+
             
-            if option == "Kanunlar":
-                with col2:
-                    option2 = st.selectbox("Kanunlar", (
-                        # "Hepsi",
-                        # "4734", 
-                        # "4735"
-                        Config.Option_Kanun_Hepsi,
-                        Config.Option_Kanun_4734,
-                        Config.Option_Kanun_4735
-                        ))
-            elif option == "Tebliğler":
-                with col2:
-                    option2 = st.selectbox(
-                        "Tebliğler",
-                        (
-                            Config.Option_Teblig_Hepsi,
-                            Config.Option_Teblig_4734,
-                            Config.Option_Teblig_Dogrudan,
-                            Config.Option_Teblig_Esik,
-                            Config.Option_Teblig_Ihalelere,
-                            Config.Option_Teblig_KamuIhale,
-                            Config.Option_Teblig_KamuOzel,
-                            Config.Option_Teblig_Yapim
-                        ))
-            elif option == "Esaslar":
-                with col2:
-                    option2 = st.selectbox("Esaslar", (
-                        # "Hepsi"
-                        Config.Option_Esas_Hepsi
-                        ))
-            elif option == "Yönetmelikler":
-                with col2:
-                    option2 = st.selectbox("Yönetmelikler", (
-                        # "Hepsi",
-                        # "İhale Uygulama Yönetmelikleri",
-                        # "Muayene ve Kabul Yönetmelikleri"
-                        Config.Option_Yonetmelik_Hepsi,
-                        Config.Option_Yonetmelik_Ihale,
-                        Config.Option_Yonetmelik_Muayene,
-                        Config.Option_Yonetmelik_Ihalelere
-                        ))
-            elif option == "Yönergeler":
-                with col2:
-                    option2 = st.selectbox("Yönergeler", (
-                        # "Hepsi",
-                        # "İtirazen Şikayet Başvuru Bedelinin İadesine İlişkin Yönerge",
-                        # "Yurt Dışında Yapım İşlerinden Elde Edilen İş Deneyim Belgelerinin Belgelerin Sunuluş Şekline Uygunluğunu Tevsik Amacıyla EKAP'a Kaydedilmesine İlişkin Yönerg"
-                        Config.Option_Yonerge_Hepsi,
-                        Config.Option_Yonerge_Itiraz,
-                        Config.Option_Yonerge_Yurt
-                        ))
-            st.write(f'Arama Kümesi {option} -> {option2} olarak seçildi.')
-        else:
-            st.write(f'Arama Kümesi {option} olarak seçildi.')
+    
+
+            if "messages" not in st.session_state.keys():
+                st.session_state.messages = [
+                    {"role": "assistant", "content": self.instructions()}
+                ]
+
+            if question := st.chat_input("Sorunuzu sorabilirsiniz"):
+                message = question
+                if question.startswith("#"):
+                    message = f"Upload request for _{message.split('#')[-1].strip()}_"
+
+                st.session_state.messages.append({"role": "user", "content": message})
+
+            for message in st.session_state.messages:
+                with st.chat_message(message["role"]):
+                    st.write(message["content"])
+
+            if (
+                st.session_state.messages
+                and st.session_state.messages[-1]["role"] != "assistant"
+            ):
+                with st.chat_message("assistant"):
+                    logger.debug(f"USER INPUT: {question}")
+
+                    # Check for file upload
+                    if question.startswith("#"):
+                        url = question.split("#")[1].strip()
+                        with st.spinner(f"Adding {url} to index"):
+                            self.addurl(url)
+
+                        response = f"Added _{url}_ to index"
+                        st.write(response)
+
+                    # Show settings
+                    elif question == ":settings":
+                        response = self.settings()
+                        st.write(response)
+
+                    else:
+ 
+                        
+                        rets = self.main_search.retreive(query=question,
+                                    option=option,
+                                    option2=option2,
+                                    retrive_type=Config.RetriveType_RERANK,
+                                    top_k=topk_option, 
+                                    num_chunk=5, 
+                                    hybrit_rate=hybrid_param_option, 
+                                    chunk_score_threshold=0.4, 
+                                    exp_name="exp", 
+                                    verbose=False, 
+                                    slow_run=False, 
+                                    chat=False)
+    
+                        response_txts = []
+
+                        st.markdown("### Sonuçlar:")
+
+                        for idx, ret in enumerate(rets):
+                            fileName = ret[0]
+                            chunk = ret[1]
+                            score = ret[2]
+                            rank = idx + 1
+
+                            found_maddes = self.get_madde(chunk, fileName)
+
+                            madde_txt = ""
+                            option_txt = f"**Arama Kümesi:** {option}\n\n" if option2 is None else f"**Arama Kümesi:** {option} -> {option2}\n\n"
+
+                            title_txt = f"### Sonuç - {rank}\n\n"
+                            response_txt = f"{option_txt} **Bulunduğu Dosya:** {fileName.replace('.txt', '')}"
+                            
+                            title_response_txt = f"\n\n#### Madde:\n\n"
+
+                            madde_links = []
+
+                            if found_maddes:
+                                for idy, madde in enumerate(found_maddes):
+                                    # check if title is pd nan 
+                                    c_title = str(madde["Title"]).strip() if pd.isna(madde["Title"]) == False else "Madde başlığı bulunmamaktadır." 
+                                    
+                                    # change color of text with highlight colors
+                                    # link_text =  '*'+ c_title + "* - **Madde - "+ str(madde["Kanun No"]).strip() + '**'
+                                    link_text =  f':{highlight_colors_streamlit[idy%5]}[*'+ c_title + "*] - **Madde - "+ str(madde["Kanun No"]).strip() + '**'
+                                    
+                                    sanitized_text = madde["Kanun"]
+                                    madde_links.append({
+                                        "link_text": link_text,
+                                        "content_text": sanitized_text
+                                    })
+                            else:
+                                response_txt += "Madde bulunamadı."
 
         
-   
+                            st.markdown(title_txt, unsafe_allow_html=True)
+                            container = st.container()
+                            container.markdown(response_txt, unsafe_allow_html=True)
 
-        if "messages" not in st.session_state.keys():
-            st.session_state.messages = [
-                {"role": "assistant", "content": self.instructions()}
-            ]
+                            st.markdown(title_response_txt, unsafe_allow_html=True)
+                            # st.markdown(response_txt, unsafe_allow_html=True) 
+                            response_txts.append(response_txt)
+                            
 
-        if question := st.chat_input("Sorunuzu sorabilirsiniz"):
-            message = question
-            if question.startswith("#"):
-                message = f"Upload request for _{message.split('#')[-1].strip()}_"
-
-            st.session_state.messages.append({"role": "user", "content": message})
-
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.write(message["content"])
-
-        if (
-            st.session_state.messages
-            and st.session_state.messages[-1]["role"] != "assistant"
-        ):
-            with st.chat_message("assistant"):
-                logger.debug(f"USER INPUT: {question}")
-
-                # Check for file upload
-                if question.startswith("#"):
-                    url = question.split("#")[1].strip()
-                    with st.spinner(f"Adding {url} to index"):
-                        self.addurl(url)
-
-                    response = f"Added _{url}_ to index"
-                    st.write(response)
-
-                # Show settings
-                elif question == ":settings":
-                    response = self.settings()
-                    st.write(response)
-
-                else:
-                    # Check for Graph RAG
-                    print("LOGAEB: ", question)
-                    
-                    rets = self.main_search.retreive(query=question,
-                                option=option,
-                                option2=option2,
-                                retrive_type=Config.RetriveType_RERANK,
-                                top_k=5, 
-                                num_chunk=50, 
-                                hybrit_rate=0.5, 
-                                chunk_score_threshold=0.4, 
-                                exp_name="exp", 
-                                verbose=False, 
-                                slow_run=False, 
-                                chat=False)
-  
-
-
-                    response_txts = []
-
-                    st.markdown("### Sonuçlar:")
-
-                    for idx, ret in enumerate(rets):
-                        fileName = ret[0]
-                        chunk = ret[1]
-                        score = ret[2]
-                        rank = idx + 1
-
-                        found_maddes = self.get_madde(chunk, fileName)
-
-                        madde_txt = ""
-                        option_txt = f"**Arama Kümesi:** {option}\n\n" if option2 is None else f"**Arama Kümesi:** {option} -> {option2}\n\n"
-
-                        title_txt = f"### Sonuç - {rank}\n\n"
-                        response_txt = f"{option_txt} **Bulunduğu Dosya:** {fileName.replace('.txt', '')}"
-                        
-                        title_response_txt = f"\n\n#### Madde:\n\n"
-
-                        madde_links = []
-
-                        if found_maddes:
-                            for idy, madde in enumerate(found_maddes):
-                                # check if title is pd nan 
-                                c_title = str(madde["Title"]).strip() if pd.isna(madde["Title"]) == False else "Madde başlığı bulunmamaktadır." 
+                            for madde_link in madde_links:
+                                link_text = madde_link["link_text"]
+                                content_text = madde_link["content_text"]
                                 
-                                # change color of text with highlight colors
-                                # link_text =  '*'+ c_title + "* - **Madde - "+ str(madde["Kanun No"]).strip() + '**'
-                                link_text =  f':{highlight_colors_streamlit[idy%5]}[*'+ c_title + "*] - **Madde - "+ str(madde["Kanun No"]).strip() + '**'
+                                with st.expander(link_text):
+                                    if len(content_text.split(' ')) > 170:
+                                        st.markdown(
+                                            f"""
+                                            <div contenteditable="true" style="resize: vertical; overflow: auto; border: 1px solid; padding: 10px; height: 200px; min-height: 200px;">
+                                                {content_text}
+                                            </div>
+                                            """,
+                                            unsafe_allow_html=True,
+                                        )
+                                    else:
+                                        st.markdown(
+                                            '<div style="text-align: justify;">' +
+                                            content_text +
+                                            '</div>', 
+                                            unsafe_allow_html=True)
                                 
-                                sanitized_text = madde["Kanun"]
-                                madde_links.append({
-                                    "link_text": link_text,
-                                    "content_text": sanitized_text
-                                })
-                        else:
-                            response_txt += "Madde bulunamadı."
 
+
+                            sub_chunks = re.split(r"Madde\s([1-9][0-9]?|0)", chunk, flags=re.IGNORECASE)
+                            
+                            for idz, sub_chunk in enumerate(sub_chunks):
+                                if len(sub_chunk) < 10:
+                                    continue
+                                st.markdown(
+                                    f'<div style="text-align: justify; background-color: rgba{highlight_colors[idz%5]};' + 
+                                    'padding: 0.2em 0.4em;' +
+                                    'border-radius: 0.4em;' +
+                                    'color: black;' +
+                                    '">' +
+                                    sub_chunk + 'Madde' +
+                                    '</div>', 
+                                    unsafe_allow_html=True)
+                            
+                            st.divider()
+                            
+
+                        st.session_state.messages.append(
+                            {"role": "assistant", "content": "\n\n".join(response_txts)})
+        elif radio_button_option == Config.ChunkingMethod_NEW:
+            
+            multiselect_list = [x + ' -> Bütün Veriler' for x in self.main_categories.keys()]
+            multiselect_list.extend([x + ' -> ' + y for x in self.main_categories.keys() for y in self.main_categories[x]])
+            multiselect_list.append("Bütün Veriler")
+
+            multiselect_option = st.multiselect(
+                "Arama Nerede Yapılsın?", 
+                # [x for x in self.main_categories.keys()].extend([x for x in self.main_categories.values()]),
+                multiselect_list,
+                default=["Bütün Veriler"])
     
-                        st.markdown(title_txt, unsafe_allow_html=True)
-                        container = st.container()
-                        container.markdown(response_txt, unsafe_allow_html=True)
 
-                        st.markdown(title_response_txt, unsafe_allow_html=True)
-                        # st.markdown(response_txt, unsafe_allow_html=True) 
-                        response_txts.append(response_txt)
-                        
+            if "messages" not in st.session_state.keys():
+                st.session_state.messages = [
+                    {"role": "assistant", "content": self.instructions()}
+                ]
 
-                        for madde_link in madde_links:
-                            link_text = madde_link["link_text"]
-                            content_text = madde_link["content_text"]
+            if question := st.chat_input("Sorunuzu sorabilirsiniz"):
+                message = question
+                if question.startswith("#"):
+                    message = f"Upload request for _{message.split('#')[-1].strip()}_"
+
+                st.session_state.messages.append({"role": "user", "content": message})
+
+            for message in st.session_state.messages:
+                with st.chat_message(message["role"]):
+                    st.write(message["content"])
+
+            if (
+                st.session_state.messages
+                and st.session_state.messages[-1]["role"] != "assistant"
+            ):
+                with st.chat_message("assistant"):
+                    logger.debug(f"USER INPUT: {question}")
+
+                    # Check for file upload
+                    if question.startswith("#"):
+                        url = question.split("#")[1].strip()
+                        with st.spinner(f"Adding {url} to index"):
+                            self.addurl(url)
+
+                        response = f"Added _{url}_ to index"
+                        st.write(response)
+
+                    # Show settings
+                    elif question == ":settings":
+                        response = self.settings()
+                        st.write(response)
+
+                    else:
+                        # Check for Graph RAG
+                        print(multiselect_option)
+                        rets = self.main_search.retreive(query=question,
+                                    option=option,
+                                    option2=option2,
+                                    option3=multiselect_option,
+                                    retrive_type=Config.RetriveType_RERANK,
+                                    top_k=topk_option, 
+                                    num_chunk=5, 
+                                    hybrit_rate=hybrid_param_option, 
+                                    chunk_score_threshold=0.4, 
+                                    exp_name="exp", 
+                                    verbose=False, 
+                                    slow_run=False, 
+                                    chat=False)
+    
+                        response_txts = []
+
+                        st.markdown("### Sonuçlar:")
+
+                        for idx, ret in enumerate(rets):
+                            fileName = ret[0]
+                            chunk = ret[1]
+                            score = ret[2]
+                            rank = idx + 1
+
+                            found_maddes = self.get_madde(chunk, fileName)
+
+                            madde_txt = ""
+                            option_txt = f"**Arama Kümesi:** {option}\n\n" if option2 is None else f"**Arama Kümesi:** {option} -> {option2}\n\n"
+
+                            title_txt = f"### Sonuç - {rank}\n\n"
+                            response_txt = f"{option_txt} **Bulunduğu Dosya:** {fileName.replace('.txt', '')}"
                             
-                            with st.expander(link_text):
-                                if len(content_text.split(' ')) > 170:
-                                    st.markdown(
-                                        f"""
-                                        <div contenteditable="true" style="resize: vertical; overflow: auto; border: 1px solid; padding: 10px; height: 200px; min-height: 200px;">
-                                            {content_text}
-                                        </div>
-                                        """,
-                                        unsafe_allow_html=True,
-                                    )
-                                else:
-                                    st.markdown(
-                                        '<div style="text-align: justify;">' +
-                                        content_text +
-                                        '</div>', 
-                                        unsafe_allow_html=True)
+                            title_response_txt = f"\n\n#### Madde:\n\n"
+
+                            madde_links = []
+
+                            if found_maddes:
+                                for idy, madde in enumerate(found_maddes):
+                                    # check if title is pd nan 
+                                    c_title = str(madde["Title"]).strip() if pd.isna(madde["Title"]) == False else "Madde başlığı bulunmamaktadır." 
+                                    
+                                    # change color of text with highlight colors
+                                    # link_text =  '*'+ c_title + "* - **Madde - "+ str(madde["Kanun No"]).strip() + '**'
+                                    link_text =  f':{highlight_colors_streamlit[idy%5]}[*'+ c_title + "*] - **Madde - "+ str(madde["Kanun No"]).strip() + '**'
+                                    
+                                    sanitized_text = madde["Kanun"]
+                                    madde_links.append({
+                                        "link_text": link_text,
+                                        "content_text": sanitized_text
+                                    })
+                            else:
+                                response_txt += "Madde bulunamadı."
+
+        
+                            st.markdown(title_txt, unsafe_allow_html=True)
+                            container = st.container()
+                            container.markdown(response_txt, unsafe_allow_html=True)
+
+                            st.markdown(title_response_txt, unsafe_allow_html=True)
+                            # st.markdown(response_txt, unsafe_allow_html=True) 
+                            response_txts.append(response_txt)
                             
 
+                            for madde_link in madde_links:
+                                link_text = madde_link["link_text"]
+                                content_text = madde_link["content_text"]
+                                
+                                with st.expander(link_text):
+                                    if len(content_text.split(' ')) > 170:
+                                        st.markdown(
+                                            f"""
+                                            <div contenteditable="true" style="resize: vertical; overflow: auto; border: 1px solid; padding: 10px; height: 200px; min-height: 200px;">
+                                                {content_text}
+                                            </div>
+                                            """,
+                                            unsafe_allow_html=True,
+                                        )
+                                    else:
+                                        st.markdown(
+                                            '<div style="text-align: justify;">' +
+                                            content_text +
+                                            '</div>', 
+                                            unsafe_allow_html=True)
+                                
 
-                        sub_chunks = re.split(r"Madde\s([1-9][0-9]?|0)", chunk, flags=re.IGNORECASE)
-                        
-                        for idz, sub_chunk in enumerate(sub_chunks):
-                            if len(sub_chunk) < 10:
-                                continue
-                            st.markdown(
-                                f'<div style="text-align: justify; background-color: rgba{highlight_colors[idz%5]};' + 
-                                'padding: 0.2em 0.4em;' +
-                                'border-radius: 0.4em;' +
-                                'color: black;' +
-                                '">' +
-                                sub_chunk + 'Madde' +
-                                '</div>', 
-                                unsafe_allow_html=True)
-                        
-                        st.divider()
-                        
 
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": "\n\n".join(response_txts)})
+                            sub_chunks = re.split(r"Madde\s([1-9][0-9]?|0)", chunk, flags=re.IGNORECASE)
+                            
+                            for idz, sub_chunk in enumerate(sub_chunks):
+                                if len(sub_chunk) < 10:
+                                    continue
+                                st.markdown(
+                                    f'<div style="text-align: justify; background-color: rgba{highlight_colors[idz%5]};' + 
+                                    'padding: 0.2em 0.4em;' +
+                                    'border-radius: 0.4em;' +
+                                    'color: black;' +
+                                    '">' +
+                                    sub_chunk + 'Madde' +
+                                    '</div>', 
+                                    unsafe_allow_html=True)
+                            
+                            st.divider()
+                            
 
+                        st.session_state.messages.append(
+                            {"role": "assistant", "content": "\n\n".join(response_txts)})
 
 
 @st.cache_resource(show_spinner="Modeller yükleniyor... Veri setleri oluşturuluyor...")

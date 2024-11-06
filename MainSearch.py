@@ -13,6 +13,8 @@ from glob import glob
 import re
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
+import time
+
 
 
 class Config:
@@ -73,6 +75,21 @@ class Config:
     ChunkType_512 = 1
     ChunkType_WHOLE = 2
 
+    # Chunking Methods
+    ChunkingMethod_OLD = "Eski"
+    ChunkingMethod_NEW = "Yeni"
+
+    def calculate_runtime(func):
+        def wrapper(*args, **kwargs):
+            start_time = time.time()
+            result = func(*args, **kwargs)
+            end_time = time.time()
+            runtime = end_time - start_time
+            print(f"Function '{func.__name__}' executed in: {runtime:.4f} seconds")
+            return result
+        return wrapper
+
+
 class Chunking():
     def __init__(self, chunk_type, txt_folder="/media/alperk/Disk/KiK/KiK_Application/Data/converted_kik_data_txt_format"):
         self.chunk_type = chunk_type
@@ -131,19 +148,28 @@ class Chunking():
         return text.strip()
 
 class MainSearch():
-    def __init__(self, model_name, indexed_csv_file, chunk_type):
+    def __init__(self, model_name, chunk_type, chunking_method):
         self.model_name = model_name
         self.chunker_df = None    
+        self.chunking_method = chunking_method
 
         print(f"Model creating for {model_name}")
         self.embedding = Embeddings(path=model_name, hybrid=True, content=True, trust_remote_code=True)
-        self.df_file_name = pd.read_csv(indexed_csv_file, index_col=False)
 
-        self.IndexBasePath = "/media/alperk/Disk/KiK/KiK_Application/Data/Indexes/"
+        if chunking_method == Config.ChunkingMethod_OLD:
+            self.df_file_name = pd.read_csv("Data/kik_512_chunk_17_09_24.csv", index_col=False)
+        elif chunking_method == Config.ChunkingMethod_NEW:
+            self.df_file_name = pd.read_csv("Data/new_version/chunked_kik_all_madde_filtered.csv", index_col=False)
+        else:
+            print("Invalid Chunking Method")
+            return
+        
+        self.IndexBasePath = "Data/Indexes/"
+
 
         # self.chunker = Chunking(chunk_type)
         # index_path = self.index(model_name, indexed_csv_file, chunk_type)
-        # print(f"Index loaded from {index_path}")
+        # print(f"Index loade.txtd from {index_path}")
 
 
         # Initialize the Hugging Face reranker model
@@ -398,55 +424,77 @@ class MainSearch():
     
         print(f"Results saved to {file_name}")
 
+    
+    @Config.calculate_runtime
+    def embedding_search(self, query, weights, limit):
+        return self.embedding.search(query, weights=weights, limit=limit)
+    
+    @Config.calculate_runtime
+    def embedding_search_new(self, query, weights, limit, options):
+        temp_res =  self.embedding.search(query, weights=weights, limit=limit)
+        if options:
+            re_res = []
+            for res in temp_res:
+                print("")
+        else:
+            return temp_res
+    
 
-    def retreive(self, query, option=Config.Option_All, option2=None, retrive_type = Config.RetriveType_TOPK, top_k = 5, num_chunk=100, hybrit_rate=0.5, temperature=0.7, chunk_score_threshold = 0.4, exp_name = "exp", verbose=False, slow_run=False, chat=False):
-        
+    @Config.calculate_runtime
+    def retreive(self, query, option=Config.Option_All, option2=None, option3=[], retrive_type = Config.RetriveType_TOPK, top_k = 5, num_chunk=100, hybrit_rate=0.5, temperature=0.7, chunk_score_threshold = 0.4, exp_name = "exp", verbose=False, slow_run=False, chat=False):
+        self.option3 = option3
         # self.embedding.load(path='/data/Workspace/aebayar/KiK_RaG/Chat_GPT_Indexes/bKik_index_model_bge-m3_01-10-2024', repo_type="local")
-        if option == Config.Option_All: 
-            self.embedding.load(path=self.IndexBasePath+'All', repo_type="local")
-        elif option == Config.Option_Kanun:
-            if option2 == Config.Option_Kanun_Hepsi:
-                self.embedding.load(path=self.IndexBasePath+'Kanunlar', repo_type="local")
-            elif option2 == Config.Option_Kanun_4734:
-                self.embedding.load(path=self.IndexBasePath+'Kanunlar_4734', repo_type="local")
-            elif option2 == Config.Option_Kanun_4735:
-                self.embedding.load(path=self.IndexBasePath+'Kanunlar_4735', repo_type="local")
-        elif option == Config.Option_Teblig:
-            if option2 == Config.Option_Teblig_Hepsi:
-                self.embedding.load(path=self.IndexBasePath+'Tebligler', repo_type="local")
-            elif option2 == Config.Option_Teblig_4734:
-                self.embedding.load(path=self.IndexBasePath+'Tebligler_4734', repo_type="local")
-            elif option2 == Config.Option_Teblig_Dogrudan:
-                self.embedding.load(path=self.IndexBasePath+'Tebligler_Dogrudan', repo_type="local")
-            elif option2 == Config.Option_Teblig_Esik:
-                self.embedding.load(path=self.IndexBasePath+'Tebligler_Esik', repo_type="local")
-            elif option2 == Config.Option_Teblig_Ihalelere:
-                self.embedding.load(path=self.IndexBasePath+'Tebligler_Ihalelere', repo_type="local")
-            elif option2 == Config.Option_Teblig_KamuIhale:
-                self.embedding.load(path=self.IndexBasePath+'Tebligler_KamuIhale', repo_type="local")
-            elif option2 == Config.Option_Teblig_KamuOzel:
-                self.embedding.load(path=self.IndexBasePath+'Tebligler_KamuOzel', repo_type="local")
-            elif option2 == Config.Option_Teblig_Yapim:
-                self.embedding.load(path=self.IndexBasePath+'Tebligler_Yapim', repo_type="local")
-        elif option == Config.Option_Esas:
-            if option2 == Config.Option_Esas_Hepsi:
-                self.embedding.load(path=self.IndexBasePath+'Esaslar', repo_type="local")
-        elif option == Config.Option_Yonetmelik:
-            if option2 == Config.Option_Yonetmelik_Hepsi:
-                self.embedding.load(path=self.IndexBasePath+'Yonetmelikler', repo_type="local")
-            elif option2 == Config.Option_Yonetmelik_Ihale:
-                self.embedding.load(path=self.IndexBasePath+'Yonetmelikler_Ihale', repo_type="local")
-            elif option2 == Config.Option_Yonetmelik_Muayene:
-                self.embedding.load(path=self.IndexBasePath+'Yonetmelikler_Muayene', repo_type="local")
-            elif option2 == Config.Option_Yonetmelik_Ihalelere:
-                self.embedding.load(path=self.IndexBasePath+'Yonetmelikler_Ihalelere', repo_type="local")
-        elif option == Config.Option_Yonerge:
-            if option2 == Config.Option_Yonerge_Hepsi:
-                self.embedding.load(path=self.IndexBasePath+'Yonergeler', repo_type="local")
-            elif option2 == Config.Option_Yonerge_Itiraz:
-                self.embedding.load(path=self.IndexBasePath+'Yonergeler_Itiraz', repo_type="local")
-            elif option2 == Config.Option_Yonerge_Yurt:
-                self.embedding.load(path=self.IndexBasePath+'Yonergeler_Yurt', repo_type="local")
+        if self.chunking_method == Config.ChunkingMethod_OLD:
+            if option == Config.Option_All: 
+                self.embedding.load(path=self.IndexBasePath+'All', repo_type="local")
+            elif option == Config.Option_Kanun:
+                if option2 == Config.Option_Kanun_Hepsi:
+                    self.embedding.load(path=self.IndexBasePath+'Kanunlar', repo_type="local")
+                elif option2 == Config.Option_Kanun_4734:
+                    self.embedding.load(path=self.IndexBasePath+'Kanunlar_4734', repo_type="local")
+                elif option2 == Config.Option_Kanun_4735:
+                    self.embedding.load(path=self.IndexBasePath+'Kanunlar_4735', repo_type="local")
+            elif option == Config.Option_Teblig:
+                if option2 == Config.Option_Teblig_Hepsi:
+                    self.embedding.load(path=self.IndexBasePath+'Tebligler', repo_type="local")
+                elif option2 == Config.Option_Teblig_4734:
+                    self.embedding.load(path=self.IndexBasePath+'Tebligler_4734', repo_type="local")
+                elif option2 == Config.Option_Teblig_Dogrudan:
+                    self.embedding.load(path=self.IndexBasePath+'Tebligler_Dogrudan', repo_type="local")
+                elif option2 == Config.Option_Teblig_Esik:
+                    self.embedding.load(path=self.IndexBasePath+'Tebligler_Esik', repo_type="local")
+                elif option2 == Config.Option_Teblig_Ihalelere:
+                    self.embedding.load(path=self.IndexBasePath+'Tebligler_Ihalelere', repo_type="local")
+                elif option2 == Config.Option_Teblig_KamuIhale:
+                    self.embedding.load(path=self.IndexBasePath+'Tebligler_KamuIhale', repo_type="local")
+                elif option2 == Config.Option_Teblig_KamuOzel:
+                    self.embedding.load(path=self.IndexBasePath+'Tebligler_KamuOzel', repo_type="local")
+                elif option2 == Config.Option_Teblig_Yapim:
+                    self.embedding.load(path=self.IndexBasePath+'Tebligler_Yapim', repo_type="local")
+            elif option == Config.Option_Esas:
+                if option2 == Config.Option_Esas_Hepsi:
+                    self.embedding.load(path=self.IndexBasePath+'Esaslar', repo_type="local")
+            elif option == Config.Option_Yonetmelik:
+                if option2 == Config.Option_Yonetmelik_Hepsi:
+                    self.embedding.load(path=self.IndexBasePath+'Yonetmelikler', repo_type="local")
+                elif option2 == Config.Option_Yonetmelik_Ihale:
+                    self.embedding.load(path=self.IndexBasePath+'Yonetmelikler_Ihale', repo_type="local")
+                elif option2 == Config.Option_Yonetmelik_Muayene:
+                    self.embedding.load(path=self.IndexBasePath+'Yonetmelikler_Muayene', repo_type="local")
+                elif option2 == Config.Option_Yonetmelik_Ihalelere:
+                    self.embedding.load(path=self.IndexBasePath+'Yonetmelikler_Ihalelere', repo_type="local")
+            elif option == Config.Option_Yonerge:
+                if option2 == Config.Option_Yonerge_Hepsi:
+                    self.embedding.load(path=self.IndexBasePath+'Yonergeler', repo_type="local")
+                elif option2 == Config.Option_Yonerge_Itiraz:
+                    self.embedding.load(path=self.IndexBasePath+'Yonergeler_Itiraz', repo_type="local")
+                elif option2 == Config.Option_Yonerge_Yurt:
+                    self.embedding.load(path=self.IndexBasePath+'Yonergeler_Yurt', repo_type="local")
+        elif self.chunking_method == Config.ChunkingMethod_NEW:
+            self.embedding.load(path='Data/new_version/new_madde_logic_bge-m3_06-11-2024', repo_type="local")
+        else:
+            print("Invalid Chunking Method")
+            return
 
         
         print(f"Running test for {self.model_name}, with {num_chunk} chunks, weights: {hybrit_rate}, threshold: {chunk_score_threshold}")
@@ -456,7 +504,15 @@ class MainSearch():
         
         return_value = []
 
-        results = self.embedding.search(query, weights=hybrit_rate, limit=num_chunk)
+        if self.chunking_method == Config.ChunkingMethod_OLD:
+            results = self.embedding_search(query, weights=hybrit_rate, limit=num_chunk)
+        elif self.chunking_method == Config.ChunkingMethod_NEW:
+            results = self.embedding_search_new(query, hybrit_rate, num_chunk, self.option3)
+        else:
+            print("Invalid Chunking Method")
+            return
+        
+        # results = self.embedding.search(query, weights=hybrit_rate, limit=num_chunk)
         print("LOGAEB: res len: ", len(results))
 
         if retrive_type == Config.RetriveType_TOPK:
