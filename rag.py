@@ -3,7 +3,7 @@ Runs a RAG application backed by a txtai Embeddings database.
 """
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 os.environ['TIKA_LOG_PATH'] = '/media/alperk/Disk/KiK/KiK_Application/'
 import platform
 import re
@@ -117,6 +117,39 @@ class Application:
 
         csv_file = "kik_all_madde.csv"
         self.df = pd.read_csv(csv_file)
+
+    
+    @Config.calculate_runtime
+    def get_madde_new(self, file_name, maddes, maddes_full):
+
+        start_find = time.time()
+        files = self.df['FileName'].tolist()
+        # uniques
+        files = list(set(files))
+
+        file_name = file_name.replace('.txt', '').replace('.pdf', '').replace('.docx', '').replace('.doc', '')
+        
+        found_file = None
+        for file in files:
+            fname = os.path.basename(file).split('.')[0]
+            if file_name == fname:
+                found_file = file
+                break
+
+                
+        results = []
+        if found_file:
+            filtered_rows = self.df[self.df['FileName'] == found_file]
+            filtered_rows = filtered_rows[filtered_rows['Kanun No'].isin(maddes)]
+            for ash, (_, row) in enumerate(filtered_rows.iterrows()):
+                results.append({
+                    "Title": row["Title"],
+                    "Kanun": row["Kanun"],
+                    "Kanun No": row["Kanun No"],
+                    "FileName": row["FileName"]
+                })
+        
+        return results
 
 
     @Config.calculate_runtime
@@ -251,6 +284,7 @@ class Application:
         with col1:
             with st.container(border=True):
                 radio_button_option = st.radio("Hangi versiyon kullanılsın?", [Config.ChunkingMethod_OLD, Config.ChunkingMethod_NEW],
+                                               index=1,
                                             captions=["Toplantıda gösterdiğimiz version", "Son yapılan geliştirmelerin olduğu version"])
         with col2:
             with st.container(border=False):
@@ -475,7 +509,6 @@ class Application:
                         st.session_state.messages.append(
                             {"role": "assistant", "content": "\n\n".join(response_txts)})
         elif radio_button_option == Config.ChunkingMethod_NEW:
-            
             multiselect_list = [x + ' -> Bütün Veriler' for x in self.main_categories.keys()]
             multiselect_list.extend([x + ' -> ' + y for x in self.main_categories.keys() for y in self.main_categories[x]])
             multiselect_list.append("Bütün Veriler")
@@ -497,7 +530,7 @@ class Application:
                 if question.startswith("#"):
                     message = f"Upload request for _{message.split('#')[-1].strip()}_"
 
-                st.session_state.messages.append({"role": "user", "content": message})
+                st.session_state.messages.append({"role": "user", "content": '(Önceki Soru) - 'message})
 
             for message in st.session_state.messages:
                 with st.chat_message(message["role"]):
@@ -547,14 +580,26 @@ class Application:
 
                         for idx, ret in enumerate(rets):
                             fileName = ret[0]
-                            chunk = ret[1]
+                            chunks = ret[1].split('&&')
                             score = ret[2]
+                            kanunnos = ret[3].split('&&')
                             rank = idx + 1
 
-                            found_maddes = self.get_madde(chunk, fileName)
+                            search_kanun = []
+                            search_kanun_full = []
+                            for kanunno in kanunnos:
+                                temp = kanunno.split(' - ')[0].strip()
+                                if temp != '':
+                                    search_kanun.append(temp)
+                                    search_kanun_full.append(kanunno.strip())
+
+
+                            found_maddes = self.get_madde_new(fileName, search_kanun, search_kanun_full)
+
+                            
 
                             madde_txt = ""
-                            option_txt = f"**Arama Kümesi:** {option}\n\n" if option2 is None else f"**Arama Kümesi:** {option} -> {option2}\n\n"
+                            option_txt = f"**Arama Kümesi:** {option}\n\n" if option2 is None else f"**Arama Kümesi:** {multiselect_option}\n\n"
 
                             title_txt = f"### Sonuç - {rank}\n\n"
                             response_txt = f"{option_txt} **Bulunduğu Dosya:** {fileName.replace('.txt', '')}"
@@ -613,9 +658,9 @@ class Application:
                                 
 
 
-                            sub_chunks = re.split(r"Madde\s([1-9][0-9]?|0)", chunk, flags=re.IGNORECASE)
                             
-                            for idz, sub_chunk in enumerate(sub_chunks):
+                            
+                            for idz, sub_chunk in enumerate(chunks):
                                 if len(sub_chunk) < 10:
                                     continue
                                 st.markdown(
@@ -624,15 +669,17 @@ class Application:
                                     'border-radius: 0.4em;' +
                                     'color: black;' +
                                     '">' +
-                                    sub_chunk + 'Madde' +
+                                    '<b>Madde - ' +
+                                    search_kanun_full[idz] +  '</b> - ' +
+                                    self.main_search.highlight_chunk_with_lemmas_substring(sub_chunk, question) +
                                     '</div>', 
                                     unsafe_allow_html=True)
                             
                             st.divider()
                             
 
-                        st.session_state.messages.append(
-                            {"role": "assistant", "content": "\n\n".join(response_txts)})
+                        # st.session_state.messages.append(
+                        #     {"role": "assistant", "content": "\n\n".join(response_txts)})
 
 
 @st.cache_resource(show_spinner="Modeller yükleniyor... Veri setleri oluşturuluyor...")
@@ -651,13 +698,13 @@ if __name__ == "__main__":
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     st.set_page_config(
-        page_title="MAIN - Kamu İhale Kurumu - Akıllı Arama Motoru",
+        page_title="Kamu İhale Kurumu - MAIN Akıllı Arama",
         page_icon="🚀",
         layout="wide",
         initial_sidebar_state="auto",
         menu_items=None,
     )
-    st.title(os.environ.get("TITLE", "MAIN - Kamu İhale Kurumu - Akıllı Arama Motoru 🚀"))
+    st.title(os.environ.get("TITLE", "Kamu İhale Kurumu - MAIN Akıllı Arama"))
 
 
     print("Starting RAG application...")

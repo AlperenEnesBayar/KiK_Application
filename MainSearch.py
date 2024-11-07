@@ -1,6 +1,4 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-
 from txtai import Embeddings
 import pandas as pd
 import csv
@@ -14,7 +12,8 @@ import re
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 import time
-
+import json
+from jpype import JClass, getDefaultJVMPath, shutdownJVM, startJVM, java
 
 
 class Config:
@@ -88,7 +87,6 @@ class Config:
             print(f"Function '{func.__name__}' executed in: {runtime:.4f} seconds")
             return result
         return wrapper
-
 
 class Chunking():
     def __init__(self, chunk_type, txt_folder="/media/alperk/Disk/KiK/KiK_Application/Data/converted_kik_data_txt_format"):
@@ -166,7 +164,6 @@ class MainSearch():
         
         self.IndexBasePath = "Data/Indexes/"
 
-
         # self.chunker = Chunking(chunk_type)
         # index_path = self.index(model_name, indexed_csv_file, chunk_type)
         # print(f"Index loade.txtd from {index_path}")
@@ -177,8 +174,45 @@ class MainSearch():
         self.tokenizer = AutoTokenizer.from_pretrained(reranker_model_name)
         self.reranker_model = AutoModelForSequenceClassification.from_pretrained(reranker_model_name)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         print("Is cuda available?: ",torch.cuda.is_available())
+
         self.reranker_model.to(self.device)
+
+        try:
+            startJVM(getDefaultJVMPath(), '-ea', '-Djava.class.path=%s' % ('zemberek-full.jar'))
+        except:
+            print("no need to worry")
+
+        #Lemmatizasyon
+        TurkishMorphology = JClass('zemberek.morphology.TurkishMorphology')
+        self.morphology = TurkishMorphology.createWithDefaults()
+
+
+
+    def highlight_chunk_with_lemmas_substring(self, chunk, question):
+        def Lemmatization(sentence):
+            sentence = re.sub(r'[^\w\s]', '', sentence)
+            analysis: java.util.ArrayList = (self.morphology.analyzeAndDisambiguate(sentence).bestAnalysis())
+            pos=[]
+            #kelime köküne inemediği kelimeye UNK demektedir. UNK olan kelimeleri normal hali pos listesine atılır.
+            for index,i in enumerate(analysis): 
+                pos.append(str(i.getLemmas()[0]))
+            return pos 
+            
+        try:
+            lemmas = Lemmatization(question)
+            # remove lemma shorter than 2
+            lemmas = [lemma for lemma in lemmas if len(lemma) > 2]
+            lemmas_sorted = sorted(set(lemmas), key=len, reverse=True)
+            for lemma in lemmas_sorted:
+                chunk = re.sub(f'({re.escape(lemma)}\\S*)', r'<span style="background-color: rgba(255, 249, 61, 0.3); color: black;">\1</span>', chunk, flags=re.IGNORECASE)
+            chunk = chunk.replace('</span> <span style="background-color: rgba(255, 249, 61, 0.3); color: black;">',' ')
+            chunk = chunk.replace('</span> <span style="background-color: rgba(255, 249, 61, 0.3); color: black;">',' ')
+        except:
+            print("Hightlighting Error")
+        return chunk
+
 
     def index(self, model_name, csv_file, chunk_type):
         self.chunker_df = self.chunker.chunk()
@@ -431,11 +465,48 @@ class MainSearch():
     
     @Config.calculate_runtime
     def embedding_search_new(self, query, weights, limit, options):
-        temp_res =  self.embedding.search(query, weights=weights, limit=limit)
+        self.main_categories = {
+            "Kanunlar": ["4734", "4735"],
+            "Tebliğler": [
+                "4734 Sayılı Kamu İhale Kanununun 62 nci Maddesinin (ı) Bendi Kapsamında Yapılacak Başvurulara İlişkin Tebliğ",
+                "Doğrudan Temin Yöntemiyle Yapılacak Alımlara İlişkin Tebliğ",
+                "Eşik Değerler ve Parasal Limitler Tebliği",
+                "İhalelere Yönelik Başvurular Hakkında Tebliğ",
+                "Kamu İhale Genel Tebliği",
+                "Kamu Özel İş Birliği Projeleri ile Lisanslı İşler Kapsamında Gerçekleştirilen Yapım İşlerine İlişkin İş Deneyim Belgeleri Hakkında Tebliğ",
+                "Yapım İşleri Benzer İş Grupları Tebliği"
+            ],
+            "Esaslar": ["Fiyat Farkı Esasları"],
+            "Yönetmelikler": [
+                "İhale Uygulama Yönetmelikleri",
+                "Muayene ve Kabul Yönetmelikleri",
+                "İhalelere Yönelik Başvurular Hakkında Yönetmelik"
+            ],
+            "Yönergeler": [
+                "İtirazen Şikayet Başvuru Bedelinin İadesine İlişkin Yönerge",
+                "Yurt Dışında Yapım İşlerinden Elde Edilen İş Deneyim Belgelerinin Belgelerin Sunuluş Şekline Uygunluğunu Tevsik Amacıyla EKAP'a Kaydedilmesine İlişkin Yönerg"
+            ]
+        }
+                
+    
+        temp_res = self.embedding.search("SELECT * FROM txtai WHERE similar('"+query+"', "+str(weights)+") LIMIT " + str(100))
         if options:
+            search_files = []
+            for op in options:
+                apt = glob("Data/AAM/" + op + "/**/*", recursive=True)
+                apt = [f.split('/')[-1] for f in apt if os.path.isfile(f)]
+                search_files.extend(apt)
+               
+
             re_res = []
             for res in temp_res:
-                print("")
+                jsonized = json.loads(res['data'])
+                filename = jsonized['meta']['FileName']
+                text = jsonized['text']
+                KanunNos = jsonized['meta']['KanunNos']
+                if filename in search_files:
+                    re_res.append({'text': text, 'score': res['score'], 'filename': filename, 'KanunNos': KanunNos})
+            return re_res
         else:
             return temp_res
     
@@ -610,28 +681,25 @@ class MainSearch():
             
             results = [res[1] for res in results] 
 
-
-            for idx, result in enumerate(results, start=1):
-                file_name_row = self.df_file_name.loc[self.df_file_name['Chunk'] == result['text']]
-                try:
-                    predicted_file_name = file_name_row['FileName'].values[0]
-                except:
-                    predicted_file_name = "Unknown"
-                result['FileName'] = predicted_file_name
-
-
             for idx, result in enumerate(results, start=1):                        
                 if current_top_k >= top_k:
                     break
-                file_name_row = self.df_file_name.loc[self.df_file_name['Chunk'] == result['text']]
-                try:
-                    predicted_file_name = file_name_row['FileName'].values[0]
-                except:
-                    predicted_file_name = "Unknown"
                 current_top_k += 1
-                return_value.append((predicted_file_name, result['text'], result['score']))
+                return_value.append((result['filename'], result['text'], result['score'], result['KanunNos']))
 
                 chat_text_txt += ('\n\n' + result['text'])
+
+            # for idx, result in enumerate(results, start=1):                        
+            #     if current_top_k >= top_k:
+            #         break
+            #     file_name_row = self.df_file_name.loc[self.df_file_name['Chunk'] == result['text']]
+            #     try:
+            #         predicted_file_name = file_name_row['FileName'].values[0]
+            #     except:
+            #         predicted_file_name = "Unknown"
+            #     current_top_k += 1
+            #     return_value.append((predicted_file_name, result['text'], result['score']))
+            #     chat_text_txt += ('\n\n' + result['text'])
         
         chat_text_txt += '\n\n' + query
 
