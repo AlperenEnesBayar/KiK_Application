@@ -146,21 +146,13 @@ class Chunking():
         return text.strip()
 
 class MainSearch():
-    def __init__(self, model_name, chunk_type, chunking_method):
+    def __init__(self, model_name, chunk_type):
         self.model_name = model_name
         self.chunker_df = None    
-        self.chunking_method = chunking_method
 
         print(f"Model creating for {model_name}")
         self.embedding = Embeddings(path=model_name, hybrid=True, content=True, trust_remote_code=True)
 
-        if chunking_method == Config.ChunkingMethod_OLD:
-            self.df_file_name = pd.read_csv("Data/kik_512_chunk_17_09_24.csv", index_col=False)
-        elif chunking_method == Config.ChunkingMethod_NEW:
-            self.df_file_name = pd.read_csv("Data/new_version/chunked_kik_all_madde_filtered.csv", index_col=False)
-        else:
-            print("Invalid Chunking Method")
-            return
         
         self.IndexBasePath = "Data/Indexes/"
 
@@ -512,7 +504,18 @@ class MainSearch():
     
 
     @Config.calculate_runtime
-    def retreive(self, query, option=Config.Option_All, option2=None, option3=[], retrive_type = Config.RetriveType_TOPK, top_k = 5, num_chunk=100, hybrit_rate=0.5, temperature=0.7, chunk_score_threshold = 0.4, exp_name = "exp", verbose=False, slow_run=False, chat=False):
+    def retreive(self, query, option=Config.Option_All, option2=None, option3=[], retrive_type = Config.RetriveType_TOPK, top_k = 5, num_chunk=100, hybrit_rate=0.5, temperature=0.7, chunk_score_threshold = 0.4, exp_name = "exp", verbose=False, slow_run=False, chat=False, chunking_method=Config.ChunkingMethod_NEW):
+        
+        self.chunking_method = chunking_method
+
+        if chunking_method == Config.ChunkingMethod_OLD:
+            self.df_file_name = pd.read_csv("Data/kik_512_chunk_17_09_24.csv", index_col=False)
+        elif chunking_method == Config.ChunkingMethod_NEW:
+            self.df_file_name = pd.read_csv("Data/new_version/chunked_kik_all_madde_filtered.csv", index_col=False)
+        else:
+            print("Invalid Chunking Method")
+            return
+        
         self.option3 = option3
         # self.embedding.load(path='/data/Workspace/aebayar/KiK_RaG/Chat_GPT_Indexes/bKik_index_model_bge-m3_01-10-2024', repo_type="local")
         if self.chunking_method == Config.ChunkingMethod_OLD:
@@ -681,13 +684,26 @@ class MainSearch():
             
             results = [res[1] for res in results] 
 
-            for idx, result in enumerate(results, start=1):                        
-                if current_top_k >= top_k:
-                    break
-                current_top_k += 1
-                return_value.append((result['filename'], result['text'], result['score'], result['KanunNos']))
+            if self.chunking_method == Config.ChunkingMethod_OLD:
+                for idx, result in enumerate(results, start=1):                        
+                    if current_top_k >= top_k:
+                        break
+                    file_name_row = self.df_file_name.loc[self.df_file_name['Chunk'] == result['text']]
+                    try:
+                        predicted_file_name = file_name_row['FileName'].values[0]
+                    except:
+                        predicted_file_name = "Unknown"
+                    current_top_k += 1
+                    return_value.append((predicted_file_name, result['text'], result['score']))
+                    chat_text_txt += ('\n\n' + result['text'])
+            elif self.chunking_method == Config.ChunkingMethod_NEW:
+                for idx, result in enumerate(results, start=1):                        
+                    if current_top_k >= top_k:
+                        break
+                    current_top_k += 1
+                    return_value.append((result['filename'], result['text'], result['score'], result['KanunNos']))
 
-                chat_text_txt += ('\n\n' + result['text'])
+                    chat_text_txt += ('\n\n' + result['text'])
 
             # for idx, result in enumerate(results, start=1):                        
             #     if current_top_k >= top_k:

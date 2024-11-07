@@ -4,7 +4,7 @@ Runs a RAG application backed by a txtai Embeddings database.
 
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-os.environ['TIKA_LOG_PATH'] = '/media/alperk/Disk/KiK/KiK_Application/'
+os.environ['TIKA_LOG_PATH'] = './'
 import platform
 import re
 
@@ -90,7 +90,7 @@ class Application:
         model_name = Config.ModelName_BAAI_BGE_M3
 
         self.context = int(os.environ.get("CONTEXT", 10))
-        self.main_search = MainSearch(model_name=model_name, chunk_type=Config.ChunkType_512, chunking_method=Config.ChunkingMethod_NEW)
+        self.main_search = MainSearch(model_name=model_name, chunk_type=Config.ChunkType_512)
         
         self.main_categories = {
             "Kanunlar": ["4734", "4735"],
@@ -272,7 +272,7 @@ class Application:
 
 
     def run(self):
-
+        
         radio_button_option = None
         hybrid_param_option = None
         topk_option = None
@@ -411,7 +411,8 @@ class Application:
                                     num_chunk=5, 
                                     hybrit_rate=hybrid_param_option, 
                                     chunk_score_threshold=0.4, 
-                                    exp_name="exp", 
+                                    exp_name="exp",
+                                    chunking_method=Config.ChunkingMethod_OLD, 
                                     verbose=False, 
                                     slow_run=False, 
                                     chat=False)
@@ -506,8 +507,9 @@ class Application:
                             st.divider()
                             
 
-                        st.session_state.messages.append(
-                            {"role": "assistant", "content": "\n\n".join(response_txts)})
+                        # st.session_state.messages.append(
+                        #     {"role": "assistant", "content": "\n\n".join(response_txts)})
+                        
         elif radio_button_option == Config.ChunkingMethod_NEW:
             multiselect_list = [x + ' -> Bütün Veriler' for x in self.main_categories.keys()]
             multiselect_list.extend([x + ' -> ' + y for x in self.main_categories.keys() for y in self.main_categories[x]])
@@ -530,7 +532,7 @@ class Application:
                 if question.startswith("#"):
                     message = f"Upload request for _{message.split('#')[-1].strip()}_"
 
-                st.session_state.messages.append({"role": "user", "content": '(Önceki Soru) - 'message})
+                st.session_state.messages.append({"role": "user", "content": message})
 
             for message in st.session_state.messages:
                 with st.chat_message(message["role"]):
@@ -566,6 +568,7 @@ class Application:
                                     option3=multiselect_option,
                                     retrive_type=Config.RetriveType_RERANK,
                                     top_k=topk_option, 
+                                    chunking_method=Config.ChunkingMethod_NEW,
                                     num_chunk=5, 
                                     hybrit_rate=hybrid_param_option, 
                                     chunk_score_threshold=0.4, 

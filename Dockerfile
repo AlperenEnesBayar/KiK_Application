@@ -3,7 +3,10 @@ ARG BASE_IMAGE=neuml/txtai-cpu
 FROM $BASE_IMAGE
 
 # Copy RAG application
-COPY rag.py requirements.txt .
+COPY requirements.txt  .
+
+EXPOSE 8501
+HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health
 
 RUN \
     # Install Java (for Apache Tika)
@@ -13,7 +16,9 @@ RUN \
     apt-get -y autoremove && \
     \
     # Install base requirements
-    python -m pip install --no-cache-dir -r requirements.txt
+    python -m pip install -r requirements.txt
+
+COPY rag.py Data zemberek-full.jar tika.log .
 
 # Start streamlit application
 ENTRYPOINT ["streamlit", "run", "rag.py"]
